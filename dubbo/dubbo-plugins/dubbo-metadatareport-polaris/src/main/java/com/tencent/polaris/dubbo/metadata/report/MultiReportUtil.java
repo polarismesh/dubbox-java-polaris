@@ -23,6 +23,8 @@ import org.apache.dubbo.common.logger.LoggerFactory;
 import org.apache.dubbo.common.utils.StringUtils;
 import org.apache.dubbo.metadata.report.MetadataReport;
 import org.apache.dubbo.metadata.report.MetadataReportFactory;
+import org.apache.dubbo.metadata.report.support.AbstractMetadataReport;
+import org.apache.dubbo.metadata.report.support.WrapAbstractMetadataReport;
 import org.apache.dubbo.rpc.model.ApplicationModel;
 
 import java.util.HashMap;
@@ -33,36 +35,28 @@ public final class MultiReportUtil {
 
     private static final ErrorTypeAwareLogger logger = LoggerFactory.getErrorTypeAwareLogger(MultiReportUtil.class);
 
-    public static Optional<MetadataReport> buildAnother(ApplicationModel application, URL url) {
+    public static Optional<WrapAbstractMetadataReport> buildAnother(ApplicationModel application, URL url) {
         ExtensionLoader<MetadataReportFactory> loader = application.getExtensionLoader(MetadataReportFactory.class);
         Map<String, MetadataReportFactory> factoryMap = loader.getSupportedExtensionInstances().stream()
                 .collect(HashMap::new, (m, v) -> m.put(loader.getExtensionName(v), v), HashMap::putAll);
 
-        boolean enableMulti = url.getParameter("report_multi", Boolean.class);
-        if (!enableMulti) {
+        String multiAddress = url.getParameter("multi_address", String.class);
+        if (StringUtils.isBlank(multiAddress)) {
             return Optional.empty();
         }
+        logger.info(String.format("another metadata-report connect url : %s", multiAddress));
+        URL copyUrl = URL.valueOf(multiAddress);
 
-        String anotherName = url.getParameter("another_protocol", "");
-        if (StringUtils.isBlank(anotherName)) {
+        if (!factoryMap.containsKey(copyUrl.getProtocol())) {
             return Optional.empty();
         }
-        if (!factoryMap.containsKey(anotherName)) {
-            return Optional.empty();
+        MetadataReportFactory factory = factoryMap.get(copyUrl.getProtocol());
+
+        MetadataReport report = factory.getMetadataReport(copyUrl);
+        if (report instanceof AbstractMetadataReport) {
+            return Optional.ofNullable(new WrapAbstractMetadataReport((AbstractMetadataReport) report));
         }
-        String anotherNamespace = url.getParameter("another_namespace", "");
-
-        // copy 一个 URL 出来
-        URL copyUrl = URL.valueOf(url.toFullString());
-        copyUrl = copyUrl.setProtocol(anotherName);
-        copyUrl = copyUrl.setAddress(url.getParameter("another_address", ""));
-        copyUrl = copyUrl.addParameter("namespace", anotherNamespace);
-
-        MetadataReportFactory factory = factoryMap.get(anotherName);
-
-        logger.info(String.format("another metadata-report connect url : %s", copyUrl));
-
-        return Optional.ofNullable(factory.getMetadataReport(copyUrl));
+        return Optional.empty();
     }
 
 }
