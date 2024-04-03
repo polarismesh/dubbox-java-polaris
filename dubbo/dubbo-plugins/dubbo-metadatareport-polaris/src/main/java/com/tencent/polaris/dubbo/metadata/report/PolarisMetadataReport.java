@@ -31,8 +31,10 @@ import com.tencent.polaris.common.registry.PolarisOperators;
 import com.tencent.polaris.common.utils.Consts;
 import com.tencent.polaris.specification.api.v1.service.manage.ServiceContractProto;
 import org.apache.dubbo.common.URL;
+import org.apache.dubbo.common.config.configcenter.ConfigItem;
 import org.apache.dubbo.common.logger.ErrorTypeAwareLogger;
 import org.apache.dubbo.common.logger.LoggerFactory;
+import org.apache.dubbo.common.utils.CollectionUtils;
 import org.apache.dubbo.common.utils.ConcurrentHashSet;
 import org.apache.dubbo.common.utils.JsonUtils;
 import org.apache.dubbo.common.utils.NamedThreadFactory;
@@ -44,6 +46,7 @@ import org.apache.dubbo.metadata.report.identifier.MetadataIdentifier;
 import org.apache.dubbo.metadata.report.identifier.ServiceMetadataIdentifier;
 import org.apache.dubbo.metadata.report.identifier.SubscriberMetadataIdentifier;
 import org.apache.dubbo.metadata.report.support.AbstractMetadataReport;
+import org.apache.dubbo.metadata.report.support.WrapAbstractMetadataReport;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -79,17 +82,21 @@ public class PolarisMetadataReport extends AbstractMetadataReport {
 
     private final ScheduledExecutorService fetchMappingExecutor = Executors.newScheduledThreadPool(4, new NamedThreadFactory("polaris-metadata-report"));
 
+    private Optional<WrapAbstractMetadataReport> another;
+
     PolarisMetadataReport(URL url) {
         super(url);
         this.operator = PolarisOperators.loadOrStoreForMetaReport(url.getHost(), url.getPort(), url.getParameters());
         this.config = operator.getPolarisConfig();
         this.providerAPI = operator.getProviderAPI();
         this.consumerAPI = operator.getConsumerAPI();
+        this.another = MultiReportUtil.buildAnother(applicationModel, url);
     }
 
     @Override
     protected void doStoreProviderMetadata(MetadataIdentifier providerMetadataIdentifier, String serviceDefinitions) {
         reportServiceContract(toDescriptor(providerMetadataIdentifier, serviceDefinitions));
+        another.ifPresent(proxyReport -> proxyReport.doStoreProviderMetadata(providerMetadataIdentifier, serviceDefinitions));
     }
 
     @Override
@@ -97,6 +104,7 @@ public class PolarisMetadataReport extends AbstractMetadataReport {
         if (getUrl().getParameter(REPORT_CONSUMER_URL_KEY, false)) {
             reportServiceContract(toDescriptor(consumerMetadataIdentifier, serviceParameterString));
         }
+        another.ifPresent(proxyReport -> proxyReport.doStoreConsumerMetadata(consumerMetadataIdentifier, serviceParameterString));
     }
 
     @Override
@@ -107,7 +115,7 @@ public class PolarisMetadataReport extends AbstractMetadataReport {
         request.setVersion(metadataIdentifier.getVersion());
         Optional<ServiceContractProto.ServiceContract> result = getServiceContract(request);
         if (!result.isPresent()) {
-            return null;
+            return another.map(proxyReport -> proxyReport.getServiceDefinition(metadataIdentifier)).orElse(null);
         }
 
         List<ServiceContractProto.InterfaceDescriptor> descriptors = result.get().getInterfacesList();
@@ -139,6 +147,10 @@ public class PolarisMetadataReport extends AbstractMetadataReport {
         });
         request.setInterfaceDescriptors(descriptors);
         reportServiceContract(request);
+
+        another.ifPresent(proxyReport -> {
+            proxyReport.getMetadataReport().publishAppMetadata(identifier, metadataInfo);
+        });
     }
 
     @Override
@@ -151,8 +163,8 @@ public class PolarisMetadataReport extends AbstractMetadataReport {
 
         Optional<ServiceContractProto.ServiceContract> result = getServiceContract(request);
         if (!result.isPresent()) {
-            // 这里返回一个空的 MetadataInfo
-            return MetadataInfo.EMPTY;
+            // 降级，由兜底的 MetadataReport 进行处理
+            return another.map(proxyReport -> proxyReport.getMetadataReport().getAppMetadata(identifier, instanceMetadata)).orElse(MetadataInfo.EMPTY);
         }
 
         Map<String, MetadataInfo.ServiceInfo> serviceInfos = new HashMap<>();
@@ -241,13 +253,16 @@ public class PolarisMetadataReport extends AbstractMetadataReport {
      * 存储 dubbo 的接口-应用的 mapping 数据时，这里对接的北极星的服务契约时，服务、版本信息为空，必须显示设置
      * InterfaceDescriptor -> 作为记录 dubbo 应用数据
      *
-     * @param serviceKey dubbo 接口名称
+     * @param serviceKey  dubbo 接口名称
      * @param application dubbo 应用名称
-     * @param url {@link URL}
+     * @param url         {@link URL}
      * @return 返回接口-应用 mapping 数据是否发布成功
      */
     @Override
     public boolean registerServiceAppMapping(String serviceKey, String application, URL url) {
+        // TODO 顺序调整
+        another.ifPresent(proxyReport -> proxyReport.getMetadataReport().registerServiceAppMapping(serviceKey, application, url));
+
         ReportServiceContractRequest request = new ReportServiceContractRequest();
         request.setName(formatMappingName(serviceKey));
         request.setService("");
@@ -269,6 +284,8 @@ public class PolarisMetadataReport extends AbstractMetadataReport {
     public void removeServiceAppMappingListener(String serviceKey, MappingListener listener) {
         Set<MappingListener> listeners = mappingListeners.getOrDefault(serviceKey, Collections.emptySet());
         listeners.remove(listener);
+
+        another.ifPresent(proxyReport -> proxyReport.getMetadataReport().removeServiceAppMappingListener(serviceKey, listener));
     }
 
     /**
@@ -281,9 +298,30 @@ public class PolarisMetadataReport extends AbstractMetadataReport {
      */
     @Override
     public Set<String> getServiceAppMapping(String serviceKey, MappingListener listener, URL url) {
+        MappingListener multiWatch = new MappingListener() {
+
+            @Override
+            public void onEvent(MappingChangedEvent event) {
+                Set<String> result = commonGetServiceAppMapping(serviceKey, url);
+                another.ifPresent(proxyReport -> result.addAll(proxyReport.getMetadataReport().getServiceAppMapping(serviceKey, url)));
+                event = new MappingChangedEvent(serviceKey, result);
+                listener.onEvent(event);
+            }
+
+            @Override
+            public void stop() {
+                listener.stop();
+            }
+        };
+
         mappingListeners.computeIfAbsent(serviceKey, s -> new ConcurrentHashSet<>());
-        mappingListeners.get(serviceKey).add(listener);
-        return getServiceAppMapping(serviceKey, url);
+        mappingListeners.get(serviceKey).add(multiWatch);
+        Set<String> result = commonGetServiceAppMapping(serviceKey, url);
+        if (CollectionUtils.isEmpty(result)) {
+            return another.map(proxyReport -> proxyReport.getMetadataReport().getServiceAppMapping(serviceKey, multiWatch, url))
+                    .orElse(Collections.emptySet());
+        }
+        return Collections.emptySet();
     }
 
     /**
@@ -295,6 +333,14 @@ public class PolarisMetadataReport extends AbstractMetadataReport {
      */
     @Override
     public Set<String> getServiceAppMapping(String serviceKey, URL url) {
+        Set<String> result = commonGetServiceAppMapping(serviceKey, url);
+        if (CollectionUtils.isEmpty(result)) {
+            return another.map(proxyReport -> proxyReport.getMetadataReport().getServiceAppMapping(serviceKey, url)).orElse(Collections.emptySet());
+        }
+        return Collections.emptySet();
+    }
+
+    private Set<String> commonGetServiceAppMapping(String serviceKey, URL url) {
         if (!mappingSubscribes.containsKey(serviceKey)) {
             GetServiceContractRequest request = new GetServiceContractRequest();
             request.setName(formatMappingName(serviceKey));
@@ -312,12 +358,13 @@ public class PolarisMetadataReport extends AbstractMetadataReport {
             });
         }
         ServiceContractProto.ServiceContract contract = mappingSubscribes.get(serviceKey);
-        return  getAppNames(contract);
+        return getAppNames(contract);
     }
 
     @Override
     public void destroy() {
         super.destroy();
+        another.ifPresent(proxyReport -> proxyReport.getMetadataReport().destroy());
         fetchMappingExecutor.shutdown();
     }
 
@@ -380,27 +427,47 @@ public class PolarisMetadataReport extends AbstractMetadataReport {
         }
     }
 
+    // -------- 仅用于 multi-metadata-report 情况下使用
+    @Override
+    public ConfigItem getConfigItem(String key, String group) {
+        return another.map(proxyReport -> proxyReport.getConfigItem(key, group)).orElse(null);
+    }
+
+    @Override
+    public boolean registerServiceAppMapping(String serviceInterface, String defaultMappingGroup, String newConfigContent, Object ticket) {
+        return another.map(proxyReport -> proxyReport.getMetadataReport().
+                registerServiceAppMapping(serviceInterface, defaultMappingGroup, newConfigContent, ticket)).orElse(false);
+    }
+
     // -------- dubbo metadata-report 定义了接口，但是实际以及没有任何调用 ---------
     @Override
     protected void doSaveMetadata(ServiceMetadataIdentifier metadataIdentifier, URL url) {
+        another.ifPresent(proxyReport -> {
+            proxyReport.doSaveMetadata(metadataIdentifier, url);
+        });
     }
 
     @Override
     protected void doRemoveMetadata(ServiceMetadataIdentifier metadataIdentifier) {
+        another.ifPresent(proxyReport -> proxyReport.doRemoveMetadata(metadataIdentifier));
     }
 
     @Override
     protected List<String> doGetExportedURLs(ServiceMetadataIdentifier metadataIdentifier) {
+        if (another.isPresent()) {
+            return another.get().doGetExportedURLs(metadataIdentifier);
+        }
         return Collections.emptyList();
     }
 
     @Override
     protected void doSaveSubscriberData(SubscriberMetadataIdentifier identifier, String urlListStr) {
+        another.ifPresent(proxyReport -> proxyReport.doSaveSubscriberData(identifier, urlListStr));
     }
 
     @Override
     protected String doGetSubscribedURLs(SubscriberMetadataIdentifier identifier) {
-        return null;
+        return another.map(proxyReport -> proxyReport.doGetSubscribedURLs(identifier)).orElse(null);
     }
 
     private static Set<String> getAppNames(ServiceContractProto.ServiceContract contract) {

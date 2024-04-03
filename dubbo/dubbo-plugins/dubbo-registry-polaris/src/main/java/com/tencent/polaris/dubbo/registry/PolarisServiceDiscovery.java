@@ -47,6 +47,9 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 
 public class PolarisServiceDiscovery extends AbstractServiceDiscovery {
@@ -57,7 +60,9 @@ public class PolarisServiceDiscovery extends AbstractServiceDiscovery {
 
     private final Map<String, ServiceListener> listenerMap = new ConcurrentHashMap<>();
 
-    private Map<String, Set<ServiceInstancesChangedListener>> serviceListeners = new ConcurrentHashMap<>();
+    private final Map<String, Set<ServiceInstancesChangedListener>> serviceListeners = new ConcurrentHashMap<>();
+
+    private final List<ServiceInstance> dubboInstances = new CopyOnWriteArrayList<>();
 
     public PolarisServiceDiscovery(ApplicationModel applicationModel, URL url) {
         super(applicationModel, url);
@@ -67,6 +72,7 @@ public class PolarisServiceDiscovery extends AbstractServiceDiscovery {
 
     @Override
     protected void doRegister(ServiceInstance instance) throws RuntimeException {
+        dubboInstances.add(instance);
         Map<String, String> metadata = new HashMap<>(instance.getMetadata());
         metadata.remove(Consts.INSTANCE_WEIGHT);
         metadata.remove(Consts.INSTANCE_VERSION);
@@ -98,6 +104,9 @@ public class PolarisServiceDiscovery extends AbstractServiceDiscovery {
 
     @Override
     protected void doDestroy() throws Exception {
+        for (ServiceInstance instance : dubboInstances) {
+            doUnregister(instance);
+        }
         operator.destroy();
     }
 
