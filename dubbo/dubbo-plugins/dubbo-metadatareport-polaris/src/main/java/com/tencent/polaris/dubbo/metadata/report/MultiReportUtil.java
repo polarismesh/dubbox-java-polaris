@@ -40,23 +40,43 @@ public final class MultiReportUtil {
         Map<String, MetadataReportFactory> factoryMap = loader.getSupportedExtensionInstances().stream()
                 .collect(HashMap::new, (m, v) -> m.put(loader.getExtensionName(v), v), HashMap::putAll);
 
-        String multiAddress = url.getParameter("multi_address", String.class);
-        if (StringUtils.isBlank(multiAddress)) {
+
+        Optional<URL> ret = generate(url);
+        if (!ret.isPresent()) {
             return Optional.empty();
         }
-        logger.info(String.format("another metadata-report connect url : %s", multiAddress));
-        URL copyUrl = URL.valueOf(multiAddress);
+        URL copyUrl = ret.get();
 
         if (!factoryMap.containsKey(copyUrl.getProtocol())) {
             return Optional.empty();
         }
         MetadataReportFactory factory = factoryMap.get(copyUrl.getProtocol());
 
+        Map<String, String> parameters = url.getParameters();
+        parameters.remove("namespace");
+        copyUrl.addParameters(parameters);
+
         MetadataReport report = factory.getMetadataReport(copyUrl);
         if (report instanceof AbstractMetadataReport) {
             return Optional.ofNullable(new WrapAbstractMetadataReport((AbstractMetadataReport) report));
         }
         return Optional.empty();
+    }
+
+    public static Optional<URL> generate(URL url) {
+        String multiAddress = url.getParameter("multi_address", String.class);
+        if (StringUtils.isBlank(multiAddress)) {
+            return Optional.empty();
+        }
+        URL copyUrl = URL.valueOf(multiAddress);
+
+        Map<String, String> parameters = url.getParameters();
+        parameters.remove("namespace");
+        parameters.remove("multi_address");
+        copyUrl = copyUrl.addParameters(parameters);
+
+        logger.info(String.format("another metadata-report connect url : %s", copyUrl.toString()));
+        return Optional.of(copyUrl);
     }
 
 }

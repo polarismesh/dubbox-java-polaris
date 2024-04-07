@@ -20,13 +20,18 @@ import org.apache.dubbo.common.URL;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.util.Optional;
+
 public class MultiReportUtilTest {
 
     @Test
     public void testMultiAddress() {
-        String testUrl = "polaris://127.0.0.1:8091?namespace=dubbo-multi&multi_address=nacos://127.0.0.1:8848?namespace=xxxxx";
+        String testUrl = "polaris://127.0.0.1:8091?namespace=dubbo-multi&multi_address=nacos://127.0.0.1:8848?namespace=xxxxx&username=xxx";
         URL dubboUrl = URL.valueOf(testUrl);
-        Assert.assertEquals("nacos://127.0.0.1:8848?namespace=xxxxx", dubboUrl.getParameter("multi_address"));
+
+        Optional<URL> ret = MultiReportUtil.generate(dubboUrl);
+        Assert.assertTrue(ret.isPresent());
+        Assert.assertEquals("nacos://127.0.0.1:8848?namespace=xxxxx&username=xxx", ret.get().toString());
     }
 
 }
