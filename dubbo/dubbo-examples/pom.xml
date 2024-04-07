@@ -11,7 +11,7 @@
     <modelVersion>4.0.0</modelVersion>
 
     <properties>
-        <skip.maven.deploy>true</skip.maven.deploy>
+        <maven.deploy.skip>true</maven.deploy.skip>
     </properties>
 
     <artifactId>dubbo-examples</artifactId>
