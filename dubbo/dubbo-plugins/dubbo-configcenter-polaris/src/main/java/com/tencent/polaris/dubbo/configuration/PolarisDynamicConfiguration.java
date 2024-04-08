@@ -23,11 +23,13 @@ import com.tencent.polaris.api.plugin.configuration.ConfigFileResponse;
 import com.tencent.polaris.common.registry.PolarisConfig;
 import com.tencent.polaris.common.registry.PolarisOperator;
 import com.tencent.polaris.common.registry.PolarisOperators;
+import com.tencent.polaris.configuration.api.core.ChangeType;
 import com.tencent.polaris.configuration.api.core.ConfigFile;
 import com.tencent.polaris.configuration.api.core.ConfigFilePublishService;
 import com.tencent.polaris.configuration.api.core.ConfigFileService;
 import com.tencent.polaris.configuration.api.rpc.ConfigPublishRequest;
 import org.apache.dubbo.common.URL;
+import org.apache.dubbo.common.config.configcenter.ConfigChangeType;
 import org.apache.dubbo.common.config.configcenter.ConfigChangedEvent;
 import org.apache.dubbo.common.config.configcenter.ConfigurationListener;
 import org.apache.dubbo.common.config.configcenter.DynamicConfiguration;
@@ -52,7 +54,7 @@ public class PolarisDynamicConfiguration implements DynamicConfiguration {
 
     private final ConfigFilePublishService filePublisher;
 
-    private Map<String, Set<ConfigurationListener>> listeners = new ConcurrentHashMap<>();
+    private final Map<String, Set<ConfigurationListener>> listeners = new ConcurrentHashMap<>();
 
     PolarisDynamicConfiguration(URL url) {
         this.operator = PolarisOperators.loadOrStoreForConfig(url.getHost(), url.getPort(), url.getParameters());
@@ -69,7 +71,8 @@ public class PolarisDynamicConfiguration implements DynamicConfiguration {
             configFile.addChangeListener(event -> {
                 Set<ConfigurationListener> watchers = listeners.getOrDefault(fileKey, Collections.emptySet());
                 watchers.forEach(configurationListener -> {
-                    ConfigChangedEvent dubboEvent = new ConfigChangedEvent(key, group, event.getNewValue());
+                    ConfigChangedEvent dubboEvent = new ConfigChangedEvent(
+                            key, group, event.getNewValue(), getChangeType(event.getChangeType()));
                     configurationListener.process(dubboEvent);
                 });
             });
@@ -179,5 +182,21 @@ public class PolarisDynamicConfiguration implements DynamicConfiguration {
 
     private String formatCode(Object val) {
         return "POLARIS:" + val;
+    }
+
+    private ConfigChangeType getChangeType(ChangeType polarisChangeType) {
+        ConfigChangeType dubboChangeType;
+        switch (polarisChangeType) {
+            case ADDED:
+                dubboChangeType = ConfigChangeType.ADDED;
+                break;
+            case DELETED:
+                dubboChangeType = ConfigChangeType.DELETED;
+                break;
+            default:
+                dubboChangeType = ConfigChangeType.MODIFIED;
+                break;
+        }
+        return dubboChangeType;
     }
 }
