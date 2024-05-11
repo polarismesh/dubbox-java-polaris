@@ -18,13 +18,10 @@ package com.tencent.polaris.dubbox.registry;
 
 import com.alibaba.dubbo.common.Constants;
 import com.alibaba.dubbo.common.URL;
-import com.alibaba.dubbo.common.extension.ExtensionLoader;
 import com.alibaba.dubbo.common.utils.CollectionUtils;
 import com.alibaba.dubbo.common.utils.ConcurrentHashSet;
 import com.alibaba.dubbo.registry.NotifyListener;
 import com.alibaba.dubbo.registry.support.FailbackRegistry;
-import com.alibaba.dubbo.rpc.Filter;
-import com.alibaba.dubbo.rpc.cluster.RouterFactory;
 import com.tencent.polaris.api.exception.PolarisException;
 import com.tencent.polaris.api.listener.ServiceListener;
 import com.tencent.polaris.api.pojo.Instance;
@@ -34,7 +31,6 @@ import com.tencent.polaris.common.registry.Consts;
 import com.tencent.polaris.common.registry.ConvertUtils;
 import com.tencent.polaris.common.registry.PolarisOperator;
 import com.tencent.polaris.common.registry.PolarisOperators;
-import com.tencent.polaris.common.utils.ExtensionConsts;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 

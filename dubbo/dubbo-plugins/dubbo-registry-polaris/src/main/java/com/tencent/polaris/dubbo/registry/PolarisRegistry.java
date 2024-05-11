@@ -197,7 +197,7 @@ public class PolarisRegistry extends FailbackRegistry {
     @Override
     public void doUnsubscribe(URL url, NotifyListener listener) {
         LOGGER.info("[polaris] unsubscribe service: {}", url.toString());
-        ServiceListener serviceListener = serviceListeners.get(listener);
+        ServiceListener serviceListener = serviceListeners.get(url);
         if (null != serviceListener) {
             polarisOperator.unwatchService(url.getServiceInterface(), serviceListener);
         }

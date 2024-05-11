@@ -40,14 +40,14 @@ public class PolarisConfig {
         configAddress = String.format("%s:%d", host, Consts.CONFIG_PORT);
 
         String namespaceStr = parameters.get(Consts.KEY_NAMESPACE);
-        if (null == namespaceStr || namespaceStr.length() == 0) {
+        if (null == namespaceStr || namespaceStr.isEmpty()) {
             namespaceStr = Consts.DEFAULT_NAMESPACE;
         }
         this.namespace = namespaceStr;
         this.token = parameters.get(Consts.KEY_TOKEN);
         int healthTTL = Consts.DEFAULT_TTL;
         String ttlStr = System.getProperty(Consts.KEY_TTL);
-        if (null != ttlStr && ttlStr.length() > 0) {
+        if (null != ttlStr && !ttlStr.isEmpty()) {
             try {
                 healthTTL = Integer.parseInt(ttlStr);
             } catch (Exception e) {
