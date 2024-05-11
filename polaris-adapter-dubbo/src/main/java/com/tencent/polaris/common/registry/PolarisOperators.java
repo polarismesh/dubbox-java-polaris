@@ -17,29 +17,29 @@
 
 package com.tencent.polaris.common.registry;
 
-import java.util.Collection;
 import java.util.Collections;
-import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.function.Function;
 
 public class PolarisOperators {
 
     private final Map<String, PolarisOperator> polarisOperatorMap = new ConcurrentHashMap<>();
+
+    private final Map<String, PolarisClient> polarisClientMap = new ConcurrentHashMap<>();
 
     private PolarisOperators() {
     }
 
     public static final PolarisOperators INSTANCE = new PolarisOperators();
 
-    public PolarisOperator loadOrStore(String host, int port, Map<String, String> parameters, BootConfigHandler... handlers) {
+    @SuppressWarnings("unchecked")
+    public synchronized PolarisOperator loadOrStore(String host, int port, Map<String, String> parameters, BootConfigHandler... handlers) {
+        PolarisConfig polarisConfig = new PolarisConfig(host, port, parameters);
         Map<String, String> params = Optional.ofNullable(parameters).orElse(Collections.EMPTY_MAP);
+        PolarisClient saveClient = polarisClientMap.computeIfAbsent(host+ port, s-> new PolarisClient(polarisConfig.getRegistryAddress(), polarisConfig.getConfigAddress()));
         String key = host + ":" + port + "|hash_code:" + params.hashCode();
-        PolarisOperator saveVal = polarisOperatorMap.computeIfAbsent(key, s -> new PolarisOperator(host, port, parameters, handlers));
-        return saveVal;
+        return polarisOperatorMap.computeIfAbsent(key, s1 -> new PolarisOperator(saveClient, host, port, parameters, handlers));
     }
 
     public PolarisOperator getPolarisOperator(String host, int port) {
@@ -52,11 +52,6 @@ public class PolarisOperators {
             return null;
         }
         return polarisOperatorMap.values().iterator().next();
-    }
-
-    public void deletePolarisOperator(String host, int port) {
-        String address = String.format("%s:%d", host, port);
-        polarisOperatorMap.remove(address);
     }
 
 }
